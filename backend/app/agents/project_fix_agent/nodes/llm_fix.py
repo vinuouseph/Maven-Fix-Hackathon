@@ -52,17 +52,42 @@ WORKFLOW — always follow this pattern:
   3. Use write_file_lines to splice in only the changed lines. Preserve everything else.
   4. Use create_new_file only when a required class / config file does not exist yet.
 
+CRITICAL STRATEGY — BATCH FIXES BY PATTERN:
+  When you see the SAME type of error across multiple files (e.g. javax.* import errors),
+  you MUST fix ALL files with that pattern in ONE pass. Do NOT fix one file and wait for
+  the next iteration. Read each affected file, patch it, then move to the next.
+
+SPRING BOOT 2.x → 3.x MIGRATION PATTERNS (apply ALL of these when relevant):
+  • javax.persistence.*     → jakarta.persistence.*
+  • javax.servlet.*         → jakarta.servlet.*
+  • javax.validation.*      → jakarta.validation.*
+  • javax.annotation.*      → jakarta.annotation.*
+  • javax.transaction.*     → jakarta.transaction.*
+  • javax.websocket.*       → jakarta.websocket.*
+  • javax.mail.*            → jakarta.mail.*
+  • @Type(type="yes_no")    → @Convert(converter = org.hibernate.type.YesNoConverter.class)
+  • WebSecurityConfigurerAdapter → remove; use SecurityFilterChain @Bean instead
+  • antMatchers(...)        → requestMatchers(...)
+  • authorizeRequests()     → authorizeHttpRequests()
+  • .and()                  → use lambda DSL with http.xxx(cfg -> cfg.yyy(...))
+  • SpringFox (springfox.*) → SpringDoc (springdoc-openapi-starter-webmvc-ui)
+
 RULES:
   1. FIX ALL ERRORS in this response — do not leave any unaddressed.
   2. After read_file_lines, use the line numbers shown to make a precise write_file_lines call.
   3. When patching imports or a small method, replace ONLY the minimal range of lines.
   4. NEVER delete class fields, entity variables, or getter/setter methods when patching.
-  5. JAVAX → JAKARTA: If Spring Boot >= 3.x, replace ALL javax.* with jakarta.* equivalents.
+  5. JAVAX → JAKARTA: If Spring Boot >= 3.x, replace ALL javax.* with jakarta.* equivalents
+     in EVERY file in ONE pass.
   6. CASCADING ERRORS: Fix every error in the current list — including secondary effects.
   7. IMPORT ERRORS: Fix ALL broken imports in a file in a SINGLE write_file_lines call.
+     Read the FULL import block (lines 1-20 typically), then write back ALL corrected imports.
   8. MISSING CLASSES: Use create_new_file for any missing DTOs, configs, or exceptions.
   9. You may call multiple tools in sequence within one response — they execute in order.
+     Use as many tool calls as needed — do NOT stop early.
  10. Do NOT output any prose, explanation, or markdown fences outside of tool calls.
+ 11. When fixing a file, always read it FIRST to get the current line numbers, THEN write.
+     Never assume line numbers from a previous iteration — they may have shifted.
 """
 
 HUMAN_PROMPT_TEMPLATE = """## Compiler Errors — Iteration {iteration} ({error_count} error(s) remaining)
@@ -154,7 +179,7 @@ def llm_fix_agent_node(state: AgentState, config: RunnableConfig) -> AgentState:
 
         tools_called: list[str] = []
 
-        for step in range(4):
+        for step in range(12):
             response = llm_with_tools.invoke(messages)
             messages.append(response)
 

@@ -77,7 +77,7 @@ def compile_node(state: AgentState, config: RunnableConfig) -> AgentState:
 
     logger.info(f"[project_fix/compile] Iteration {iteration} — {build_tool} in {build_dir}")
 
-    cmd = _find_command(build_tool, build_dir)
+    cmd = list(_find_command(build_tool, build_dir))   # copy to avoid mutating the shared constant
 
     build_args = state.get("build_args")
     if build_args:

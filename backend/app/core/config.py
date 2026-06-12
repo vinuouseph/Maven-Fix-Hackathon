@@ -18,7 +18,10 @@ class Settings:
     coding_chat_model : str = os.getenv("CODING_CHAT_MODEL", "gpt-5.4")
     llm_api_key : str = os.getenv("LLM_API_KEY", "")
     llm_base_url : str = os.getenv("LLM_BASE_URL", "")
-    llm_temperature : int = os.getenv("LLM_TEMPERATURE", -10)
+    _raw_temp = os.getenv("LLM_TEMPERATURE")
+    llm_temperature: float | None = (
+        float(_raw_temp) if _raw_temp is not None and float(_raw_temp) != -10 else None
+    )
 
     kafka_bootstrap_servers : str = os.getenv("KAFKA_URL", "localhost:9092")
     template_folder : str = os.getenv("TEMPLATE_FOLDER", "")
