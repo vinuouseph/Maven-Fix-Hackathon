@@ -181,38 +181,56 @@ def build_context_node(state: AgentState, config: RunnableConfig) -> AgentState:
 
         total = len(all_lines)
 
-        # Determine context size — expands on repeated errors
+        # Determine if this file is "stuck" (same errors repeating 3+ times)
         max_repeat = max(counts.get(e["fingerprint"], 1) for e in file_errors)
-        ctx = min(CONTEXT_LINES_AROUND * max_repeat, 80)
-
-        # Build merged ranges
-        ranges: list[tuple[int, int]] = []
-        for ln in sorted(error_lines):
-            start = max(1, ln - ctx)
-            end   = min(total, ln + ctx)
-            if ranges and start <= ranges[-1][1] + 1:
-                ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
-            else:
-                ranges.append((start, end))
-
-        slice_parts: list[str] = []
-        for (rs, re_) in ranges:
-            for i in range(rs - 1, re_):
-                ln_num = i + 1
-                marker = ">>>" if ln_num in error_lines else "   "
-                slice_parts.append(f"{marker} {ln_num:4d} | {all_lines[i].rstrip()}")
-            slice_parts.append("")
+        is_stuck = max_repeat >= 3
 
         error_notes = "\n".join(
             f"  Line {e['line_no']}: {e['error_code']}"
             for e in sorted(file_errors, key=lambda x: x["line_no"])
         )
-        sections.append(
-            f"## File: {rel_path} ({total} lines total)\n"
-            f"### Errors:\n{error_notes}\n"
-            f"### Relevant code (>>> marks error lines):\n"
-            f"```\n{''.join(slice_parts)}\n```"
-        )
+
+        if is_stuck and total <= 200:
+            # ── STUCK FILE: include FULL file content for complete rewrite ──
+            full_content = "".join(
+                f"{i+1:4d} | {line.rstrip()}\n" for i, line in enumerate(all_lines)
+            )
+            sections.append(
+                f"## ⚠️ STUCK FILE: {rel_path} ({total} lines total) — patched {max_repeat}x, STILL has errors\n"
+                f"### YOUR PREVIOUS PATCHES ARE NOT WORKING. Read the FULL file and REWRITE it correctly.\n"
+                f"### If another file defines the same @Bean, consolidate into ONE file and empty the other.\n"
+                f"### Errors:\n{error_notes}\n"
+                f"### FULL FILE CONTENT:\n"
+                f"```\n{full_content}\n```"
+            )
+        else:
+            # ── Normal context: ±N lines around each error site ──
+            ctx = min(CONTEXT_LINES_AROUND * max_repeat, 80)
+
+            # Build merged ranges
+            ranges: list[tuple[int, int]] = []
+            for ln in sorted(error_lines):
+                start = max(1, ln - ctx)
+                end   = min(total, ln + ctx)
+                if ranges and start <= ranges[-1][1] + 1:
+                    ranges[-1] = (ranges[-1][0], max(ranges[-1][1], end))
+                else:
+                    ranges.append((start, end))
+
+            slice_parts: list[str] = []
+            for (rs, re_) in ranges:
+                for i in range(rs - 1, re_):
+                    ln_num = i + 1
+                    marker = ">>>" if ln_num in error_lines else "   "
+                    slice_parts.append(f"{marker} {ln_num:4d} | {all_lines[i].rstrip()}")
+                slice_parts.append("")
+
+            sections.append(
+                f"## File: {rel_path} ({total} lines total)\n"
+                f"### Errors:\n{error_notes}\n"
+                f"### Relevant code (>>> marks error lines):\n"
+                f"```\n{''.join(slice_parts)}\n```"
+            )
 
     context_window = "\n\n".join(sections)
     token_estimate = len(context_window) // APPROX_CHARS_PER_TOKEN

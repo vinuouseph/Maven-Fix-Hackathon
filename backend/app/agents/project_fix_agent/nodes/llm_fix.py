@@ -47,7 +47,7 @@ TOOLS:
   create_new_file(path, content)   → create a completely new file (any type)
 
 WORKFLOW — always follow this pattern:
-  1. Use list_project_files if you need to understand the project structure.
+  1. Use list_project_files ONCE if you need to understand the project structure.
   2. Use read_file_lines to see the EXACT current content near an error site before patching.
   3. Use write_file_lines to splice in only the changed lines. Preserve everything else.
   4. Use create_new_file only when a required class / config file does not exist yet.
@@ -71,6 +71,18 @@ SPRING BOOT 2.x → 3.x MIGRATION PATTERNS (apply ALL of these when relevant):
   • authorizeRequests()     → authorizeHttpRequests()
   • .and()                  → use lambda DSL with http.xxx(cfg -> cfg.yyy(...))
   • SpringFox (springfox.*) → SpringDoc (springdoc-openapi-starter-webmvc-ui)
+
+ANTI-THRASHING RULES (CRITICAL — follow these to avoid infinite loops):
+  1. NEVER patch the same file more than ONCE per turn. Read it, fix EVERYTHING, write ONCE.
+  2. If TWO config files both define the same @Bean (e.g. SecurityFilterChain), you MUST
+     consolidate them: keep ONE file with the full config, and EMPTY the other file
+     (replace its entire content with just the package declaration and no class body).
+  3. Do NOT call list_project_files more than once — the file tree does not change.
+  4. Do NOT call create_new_file for a file that already exists. If you get a SKIPPED
+     response, the file exists — use read_file_lines + write_file_lines instead.
+  5. If the Previous Iterations Summary says a file has been patched 3+ times and STILL
+     has errors, your previous approach is WRONG. Read the ENTIRE file (lines 1 to end)
+     and REWRITE it completely with correct code.
 
 RULES:
   1. FIX ALL ERRORS in this response — do not leave any unaddressed.
@@ -109,13 +121,44 @@ def _format_error_list(errors: list[dict]) -> str:
 
 
 def _build_iteration_history(patches_applied: list[dict]) -> str:
+    """Build a detailed history showing what files were patched and how many times."""
     if not patches_applied:
         return "  No fixes applied yet."
     lines = []
+    file_patch_counts: dict[str, int] = {}   # track per-file patch count across iterations
+
     for p in patches_applied:
-        itr   = p.get("iteration", "?")
-        tools = p.get("tools_called", [])
-        lines.append(f"  [Iter {itr}] Tools called: {', '.join(tools) or '(none)'}")
+        itr    = p.get("iteration", "?")
+        tools  = p.get("tools_called", [])
+        files  = p.get("files_patched", [])   # list of filenames patched
+        errors_after = p.get("errors_after")  # error count after this iteration
+
+        # Track per-file counts
+        for f in files:
+            file_patch_counts[f] = file_patch_counts.get(f, 0) + 1
+
+        if files:
+            files_str = ", ".join(files[:5])
+            if len(files) > 5:
+                files_str += f" (+{len(files) - 5} more)"
+            detail = f"Patched: {files_str}"
+        else:
+            detail = f"Tools called: {', '.join(tools[:6]) or '(none)'}"
+
+        suffix = f" — {errors_after} error(s) remaining" if errors_after is not None else ""
+        lines.append(f"  [Iter {itr}] {detail}{suffix}")
+
+    # Add STUCK FILE warnings
+    stuck_files = [f for f, c in file_patch_counts.items() if c >= 3]
+    if stuck_files:
+        lines.append("")
+        lines.append("  ⚠️ STUCK FILES (patched 3+ times and STILL have errors):")
+        for f in stuck_files:
+            count = file_patch_counts[f]
+            lines.append(f"    • {f} — patched {count} times. Your previous approach is NOT working.")
+        lines.append("    → Read these files FULLY and REWRITE them completely with correct code.")
+        lines.append("    → If two files define the same @Bean, consolidate into ONE file.")
+
     return "\n".join(lines)
 
 
@@ -178,6 +221,9 @@ def llm_fix_agent_node(state: AgentState, config: RunnableConfig) -> AgentState:
         ]
 
         tools_called: list[str] = []
+        files_patched: list[str] = []          # track which files were written this iteration
+        _list_cache: str | None = None         # cache list_project_files result
+        _writes_per_file: dict[str, int] = {}  # cap writes per file
 
         for step in range(12):
             response = llm_with_tools.invoke(messages)
@@ -219,8 +265,9 @@ def llm_fix_agent_node(state: AgentState, config: RunnableConfig) -> AgentState:
                 })
                 state["token_usage"] = token_usage
 
-            # ── Execute tool calls ─────────────────────────────────────────────
+            # ── Execute tool calls (with guardrails) ───────────────────────────
             tool_results_executed = False
+            from langchain_core.messages import ToolMessage
 
             for tool_call in response.tool_calls:
                 tool_name = tool_call["name"]
@@ -239,6 +286,43 @@ def llm_fix_agent_node(state: AgentState, config: RunnableConfig) -> AgentState:
                 )
                 detail = f"{tool_name}({detail_arg!r})" if detail_arg else f"{tool_name}()"
 
+                # ── Guardrail: cache list_project_files ────────────────────────
+                if tool_name == "list_project_files" and _list_cache is not None:
+                    logger.info("[project_fix/llm_fix] Returning cached list_project_files")
+                    dispatch_custom_event(
+                        "project_fix_trace",
+                        {"id": f"tool_{tool_name}_{iteration}_{step}", "status": "running",
+                         "title": run_title, "detail": f"{detail} (cached)"},
+                        config=config,
+                    )
+                    messages.append(ToolMessage(
+                        content=_list_cache, tool_call_id=tool_id, name=tool_name
+                    ))
+                    dispatch_custom_event(
+                        "project_fix_trace",
+                        {"id": f"tool_{tool_name}_{iteration}_{step}",
+                         "status": "completed", "title": "Files Listed (cached)",
+                         "detail": "Returned cached file listing."},
+                        config=config,
+                    )
+                    tools_called.append(tool_name)
+                    tool_results_executed = True
+                    continue
+
+                # ── Guardrail: cap writes per file to 2 ───────────────────────
+                if tool_name == "write_file_lines":
+                    fpath = tool_args.get("relative_path", "")
+                    _writes_per_file[fpath] = _writes_per_file.get(fpath, 0) + 1
+                    if _writes_per_file[fpath] > 2:
+                        logger.warning(f"[project_fix/llm_fix] Capping writes to {fpath} (already written {_writes_per_file[fpath]-1}x)")
+                        messages.append(ToolMessage(
+                            content=f"GUARDRAIL: {fpath} has already been written {_writes_per_file[fpath]-1} times this iteration. "
+                                    f"Move on to fix OTHER files. Do NOT patch this file again.",
+                            tool_call_id=tool_id, name=tool_name
+                        ))
+                        tool_results_executed = True
+                        continue
+
                 dispatch_custom_event(
                     "project_fix_trace",
                     {"id": f"tool_{tool_name}_{iteration}_{step}", "status": "running",
@@ -249,24 +333,52 @@ def llm_fix_agent_node(state: AgentState, config: RunnableConfig) -> AgentState:
                 if tool_name in tool_map:
                     result = tool_map[tool_name].invoke(tool_args)
                     tools_called.append(tool_name)
-                    ok = not str(result).startswith("ERROR")
-                    logger.info(f"[project_fix/llm_fix] {tool_name}: {str(result)[:120]}")
+                    result_str = str(result)
+                    ok = not result_str.startswith("ERROR")
+                    logger.info(f"[project_fix/llm_fix] {tool_name}: {result_str[:120]}")
+
+                    # ── Guardrail: redirect SKIPPED create_new_file → auto-read ─
+                    if tool_name == "create_new_file" and result_str.startswith("SKIPPED"):
+                        fpath = tool_args.get("relative_path", "")
+                        # Auto-read the existing file so the LLM has its content
+                        try:
+                            read_result = tool_map["read_file_lines"].invoke({
+                                "relative_path": fpath, "start_line": 1, "end_line": 300
+                            })
+                            result_str = (
+                                f"REDIRECTED: {fpath} already exists. Here is its current content — "
+                                f"use write_file_lines to modify it:\n\n{read_result}"
+                            )
+                        except Exception:
+                            pass
+
+                    # Track file patching for history
+                    if tool_name == "write_file_lines":
+                        fpath = tool_args.get("relative_path", "")
+                        if fpath and fpath not in files_patched:
+                            files_patched.append(fpath)
+                    elif tool_name == "create_new_file" and not result_str.startswith(("SKIPPED", "REDIRECTED")):
+                        fpath = tool_args.get("relative_path", "")
+                        if fpath and fpath not in files_patched:
+                            files_patched.append(fpath)
+
+                    # Cache list_project_files
+                    if tool_name == "list_project_files":
+                        _list_cache = result_str
 
                     dispatch_custom_event(
                         "project_fix_trace",
                         {"id": f"tool_{tool_name}_{iteration}_{step}",
                          "status": "completed" if ok else "error",
                          "title": ok_title if ok else err_title,
-                         "detail": str(result)[:200]},
+                         "detail": result_str[:200]},
                         config=config,
                     )
                     
-                    from langchain_core.messages import ToolMessage
-                    messages.append(ToolMessage(content=str(result), tool_call_id=tool_id, name=tool_name))
+                    messages.append(ToolMessage(content=result_str, tool_call_id=tool_id, name=tool_name))
                     tool_results_executed = True
                 else:
                     logger.warning(f"[project_fix/llm_fix] Unknown tool: {tool_name}")
-                    from langchain_core.messages import ToolMessage
                     messages.append(ToolMessage(content=f"ERROR: Unknown tool {tool_name}", tool_call_id=tool_id, name=tool_name))
                     tool_results_executed = True
                     
@@ -277,6 +389,8 @@ def llm_fix_agent_node(state: AgentState, config: RunnableConfig) -> AgentState:
         patches_applied.append({
             "iteration":    iteration,
             "tools_called": tools_called,
+            "files_patched": files_patched,
+            "errors_after":  len(errors),
         })
 
         # Update rolling fix summary
