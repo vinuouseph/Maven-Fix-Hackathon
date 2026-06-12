@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f4f4f5; margin: 0; padding: 40px 20px; color: #27272a; }
+        .container { max-width: 600px; margin: 0 auto; background-color: #ffffff; border: 1px solid #e4e4e7; border-top: 3px solid #3b82f6; border-radius: 6px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .content { padding: 32px 24px; }
+        .project-line { font-size: 16px; margin-top: 0; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid #f4f4f5; color: #18181b; }
+        .data-grid { background-color: #fafafa; border: 1px solid #e4e4e7; border-radius: 4px; padding: 16px; margin: 20px 0; }
+        .data-grid-title { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #71717a; margin-bottom: 12px; font-weight: 600; }
+        .data-row { display: flex; justify-content: space-between; font-size: 14px; padding: 6px 0; border-bottom: 1px solid #f4f4f5; }
+        .data-row:last-child { border-bottom: none; }
+        .action-container { margin-top: 32px; padding-top: 24px; border-top: 1px solid #e4e4e7; text-align: center; }
+        .btn-approve { display: inline-block; background-color: #18181b; color: #ffffff; text-decoration: none; padding: 12px 24px; border-radius: 4px; font-size: 14px; font-weight: 600; margin: 0 8px; border: 1px solid #18181b; }
+        .btn-reject { display: inline-block; background-color: #ffffff; color: #18181b; text-decoration: none; padding: 12px 24px; border-radius: 4px; font-size: 14px; font-weight: 600; margin: 0 8px; border: 1px solid #d4d4d8; }
+        .link { color: #18181b; font-weight: 500; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="content">
+            <p class="project-line"><strong>Project:</strong> {{project_name}}</p>
+
+            <p style="font-size: 15px; line-height: 1.6;">The AI remediation agent has successfully updated vulnerable dependencies and resolved all resulting compilation errors. The project now compiles with zero errors.</p>
+
+            <div class="data-grid">
+                <div class="data-grid-title">Remediation Summary</div>
+                <div class="data-row"><span>Vulnerabilities Patched:</span> <strong>{{number}}</strong></div>
+                <div class="data-row"><span>Code Fix Iterations:</span> <strong>{{number_of_loops}}</strong></div>
+            </div>
+
+            <div class="data-grid">
+                <div class="data-grid-title">Artifacts for Review</div>
+                <div class="data-row"><span>📊 Updated POM:</span> <strong>Attached below</strong></div>
+                <div class="data-row"><span>📊 Dependency Changes:</span> <strong>Attached below</strong></div>
+                <div class="data-row"><span>📊 Code Changes:</span> <strong>Attached below</strong></div>
+            </div>
+<br><br><a href="{{download_url}}" class="link" style="display:inline-block; margin-top: 10px; padding: 10px 15px; background: #3b82f6; color: white; text-decoration: none; border-radius: 4px;">Download Project Workspace (.zip)</a>
+            <p style="font-size: 14px; color: #3f3f46; margin-top: 24px;">You can download the proposed workspace to review the exact code changes locally</p>
+
+            <div class="action-container">
+                <p style="font-size: 14px; color: #71717a; margin-bottom: 16px;">Please review the changes. Approving will automatically push the committed changes to the Git repository.</p>
+                <a href="{{rejection_url}}" class="btn-reject">Reject Changes</a>
+                <a href="{{approval_url}}" class="btn-approve">Approve & Merge</a>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
